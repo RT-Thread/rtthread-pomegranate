@@ -1,0 +1,9 @@
+[submodule "OpenAMP/libmetal"]
+	path = OpenAMP/libmetal
+	url = https://github.com/OpenAMP/libmetal.git
+[submodule "OpenAMP/open-amp"]
+	path = OpenAMP/open-amp
+	url = https://github.com/OpenAMP/open-amp.git
+[submodule "opensbi/opensbi"]
+	path = opensbi/opensbi
+	url = https://github.com/riscv-software-src/opensbi.git
