@@ -1,0 +1,32 @@
+{
+    "configurations": [
+        {
+            "intelliSenseMode": "clang-x64",
+            "name": "Win32",
+            "cppStandard": "c++11",
+            "cStandard": "c99",
+            "compilerPath": "/opt/riscv64-unknown-elf-gcc-8.3.0-2020.04.1-x86_64-linux-ubuntu14/bin/riscv64-unknown-elf-gcc",
+            "includePath": [
+                "/home/bernard/workspace/rt-thread/bsp/qemu-riscv-virt64",
+                "/home/bernard/workspace/rt-thread/bsp/qemu-riscv-virt64/applications",
+                "/home/bernard/workspace/rt-thread/bsp/qemu-riscv-virt64/driver",
+                "/home/bernard/workspace/rt-thread/components/dfs/filesystems/devfs",
+                "/home/bernard/workspace/rt-thread/components/dfs/filesystems/romfs",
+                "/home/bernard/workspace/rt-thread/components/dfs/include",
+                "/home/bernard/workspace/rt-thread/components/drivers/include",
+                "/home/bernard/workspace/rt-thread/components/finsh",
+                "/home/bernard/workspace/rt-thread/components/libc/compilers/common",
+                "/home/bernard/workspace/rt-thread/components/libc/compilers/gcc/newlib",
+                "/home/bernard/workspace/rt-thread/examples/utest/testcases/kernel",
+                "/home/bernard/workspace/rt-thread/include",
+                "/home/bernard/workspace/rt-thread/libcpu/risc-v/virt64"
+            ],
+            "defines": [
+                "HAVE_CCONFIG_H",
+                "RT_USING_NEWLIB",
+                "__RTTHREAD__"
+            ]
+        }
+    ],
+    "version": 4
+}
