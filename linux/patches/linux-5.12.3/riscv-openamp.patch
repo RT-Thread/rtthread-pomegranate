@@ -1,0 +1,204 @@
+diff -uprN linux-5.12.3-orig/drivers/misc/Kconfig linux-5.12.3/drivers/misc/Kconfig
+--- linux-5.12.3-orig/drivers/misc/Kconfig	2021-05-12 14:40:05.000000000 +0800
++++ linux-5.12.3/drivers/misc/Kconfig	2021-10-20 11:50:51.286549998 +0800
+@@ -445,6 +445,10 @@ config HISI_HIKEY_USB
+ 	  switching between the dual-role USB-C port and the USB-A host ports
+ 	  using only one USB controller.
+ 
++config RISCV_OPENAMP
++	bool "OpenAMP for RISCV-V"
++	default y
++
+ source "drivers/misc/c2port/Kconfig"
+ source "drivers/misc/eeprom/Kconfig"
+ source "drivers/misc/cb710/Kconfig"
+diff -uprN linux-5.12.3-orig/drivers/misc/Makefile linux-5.12.3/drivers/misc/Makefile
+--- linux-5.12.3-orig/drivers/misc/Makefile	2021-05-12 14:40:05.000000000 +0800
++++ linux-5.12.3/drivers/misc/Makefile	2021-10-20 11:51:10.885674634 +0800
+@@ -55,4 +55,5 @@ obj-$(CONFIG_PVPANIC)   	+= pvpanic.o
+ obj-$(CONFIG_HABANA_AI)		+= habanalabs/
+ obj-$(CONFIG_UACCE)		+= uacce/
+ obj-$(CONFIG_XILINX_SDFEC)	+= xilinx_sdfec.o
++obj-$(CONFIG_RISCV_OPENAMP)	+= riscv_openamp.o
+ obj-$(CONFIG_HISI_HIKEY_USB)	+= hisi_hikey_usb.o
+diff -uprN linux-5.12.3-orig/drivers/misc/riscv_openamp.c linux-5.12.3/drivers/misc/riscv_openamp.c
+--- linux-5.12.3-orig/drivers/misc/riscv_openamp.c	1970-01-01 08:00:00.000000000 +0800
++++ linux-5.12.3/drivers/misc/riscv_openamp.c	2021-10-20 11:51:27.948916829 +0800
+@@ -0,0 +1,177 @@
++
++#include <linux/sysfs.h>
++#include <linux/kobject.h>
++#include <asm/types.h>
++#include <asm/sbi.h>
++
++enum rproc_state {
++	RPROC_STOPPED	= 0,
++	RPROC_RUNNING	= 1,
++	RPROC_LAST	= 2,
++};
++
++struct openamp_drv {
++	/* physical address for remote proc start */
++	u64			paddr;
++	unsigned long		hartid;
++	/* remote proc state */
++	enum rproc_state 	state;
++};
++
++struct openamp_drv oa;
++
++struct kobject *openamp_kobj;
++
++static int sbi_hsm_hart_start(unsigned long hartid, unsigned long saddr,
++			      unsigned long priv)
++{
++	struct sbiret ret;
++
++	ret = sbi_ecall(SBI_EXT_HSM, SBI_EXT_HSM_HART_START,
++			hartid, saddr, priv, 0, 0, 0);
++	if (ret.error)
++		return sbi_err_map_linux_errno(ret.error);
++	else
++		return 0;
++}
++
++static const char * const rproc_state_string[] = {
++	[RPROC_STOPPED]		= "offline",
++	[RPROC_RUNNING]		= "running",
++	[RPROC_LAST]		= "invalid",
++};
++
++static ssize_t hartid_show(struct kobject *kobj,
++			  struct kobj_attribute *attr, char *buf)
++{
++	return sprintf(buf, "%lu\n", oa.hartid);
++}
++
++static ssize_t hartid_store(struct kobject *kobj,
++			   struct kobj_attribute *attr,
++			   const char *buf, size_t count)
++{
++	int ret;
++	long long hartid;
++
++	ret = kstrtoll(buf, 0, &hartid);
++	if (ret)
++		return ret;
++
++	oa.hartid = hartid;
++	if (oa.hartid < 0) {
++		oa.hartid = -1;
++		return -1;
++	} else {
++		return count;
++	}
++}
++
++static ssize_t paddr_show(struct kobject *kobj,
++			  struct kobj_attribute *attr, char *buf)
++{
++	return sprintf(buf, "0x%llx\n", oa.paddr);
++}
++
++static ssize_t paddr_store(struct kobject *kobj,
++			   struct kobj_attribute *attr,
++			   const char *buf, size_t count)
++{
++	int ret;
++	long long paddr;
++
++	ret = kstrtoll(buf, 0, &paddr);
++	if (!ret) {
++		oa.paddr = paddr;
++		return count;
++	} else {
++		return ret;
++	}
++}
++
++static ssize_t state_show(struct kobject *kobj,
++			  struct kobj_attribute *attr, char *buf)
++{
++	unsigned int state;
++
++	state = oa.state > RPROC_LAST ? RPROC_LAST : oa.state;
++	return sprintf(buf, "%s\n", rproc_state_string[state]);
++}
++
++static ssize_t state_store(struct kobject *kobj,
++			   struct kobj_attribute *attr,
++			   const char *buf, size_t count)
++{
++	size_t ret = -1;
++	if (sysfs_streq(buf, "start")) {
++		if (oa.state == RPROC_RUNNING)
++			return -EBUSY;
++
++		ret = sbi_hsm_hart_start(oa.hartid, oa.paddr, 0);
++		if (ret) {
++			pr_err("hart start failed\n");
++		} else {
++			oa.state = RPROC_RUNNING;
++		}
++	} else if (sysfs_streq(buf, "stop")) {
++		if (oa.state != RPROC_RUNNING)
++			return -EBUSY;
++
++		oa.state = RPROC_STOPPED;
++		ret = 0;
++	} else {
++		pr_err("invalid state\n");
++	}
++	if (ret == 0)
++		return count;
++	else
++		return ret;
++}
++
++static struct kobj_attribute openamp_attr_state  = __ATTR_RW_MODE(state, 0600);
++static struct kobj_attribute openamp_attr_hartid = __ATTR_RW_MODE(hartid, 0600);
++static struct kobj_attribute openamp_attr_paddr  = __ATTR_RW_MODE(paddr, 0600);
++
++static struct attribute *openamp_subsys_attrs[] = {
++	&openamp_attr_state.attr,
++	&openamp_attr_hartid.attr,
++	&openamp_attr_paddr.attr,
++	NULL,
++};
++
++umode_t __weak oa_attr_is_visible(struct kobject *kobj, struct attribute *attr,
++				   int n)
++{
++	return attr->mode;
++}
++
++static const struct attribute_group openamp_subsys_attr_group = {
++	.attrs = openamp_subsys_attrs,
++	.is_visible = oa_attr_is_visible,
++};
++
++static int __init riscv_openamp_init(void)
++{
++	int error;
++
++	memset(&oa, 0, sizeof(oa));
++	oa.state = RPROC_LAST;
++	openamp_kobj = kobject_create_and_add("openamp", firmware_kobj);
++	if (!openamp_kobj) {
++		pr_err("openamp: Firmware registration failed.\n");
++		return -ENOMEM;
++	}
++
++	error = sysfs_create_group(openamp_kobj, &openamp_subsys_attr_group);
++	if (error) {
++		pr_err("efi: Sysfs attribute export failed with error %d.\n",
++		       error);
++		goto err_put;
++	}
++
++	return error;
++err_put:
++	kobject_put(openamp_kobj);
++	return error;
++}
++device_initcall(riscv_openamp_init);
