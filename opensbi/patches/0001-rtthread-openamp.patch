@@ -1,0 +1,78 @@
+From 1563f720f5a1b1c4d6a58ac805e32435373a2292 Mon Sep 17 00:00:00 2001
+From: Bo Dong <bdong@ucrobotics.com>
+Date: Wed, 20 Oct 2021 18:11:37 +0800
+Subject: [PATCH] rtthread-openamp
+
+---
+ Makefile           | 2 --
+ firmware/fw_base.S | 4 ++++
+ lib/sbi/sbi_hsm.c  | 4 ++++
+ 3 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index cebb78e..b9f3245 100644
+--- a/Makefile
++++ b/Makefile
+@@ -196,7 +196,6 @@ GENFLAGS	+=	$(firmware-genflags-y)
+ CFLAGS		=	-g -Wall -Werror -ffreestanding -nostdlib -fno-strict-aliasing -O2
+ CFLAGS		+=	-fno-omit-frame-pointer -fno-optimize-sibling-calls
+ CFLAGS		+=	-mno-save-restore -mstrict-align
+-CFLAGS		+=	-mabi=$(PLATFORM_RISCV_ABI) -march=$(PLATFORM_RISCV_ISA)
+ CFLAGS		+=	-mcmodel=$(PLATFORM_RISCV_CODE_MODEL)
+ CFLAGS		+=	$(GENFLAGS)
+ CFLAGS		+=	$(platform-cflags-y)
+@@ -210,7 +209,6 @@ CPPFLAGS	+=	$(firmware-cppflags-y)
+ ASFLAGS		=	-g -Wall -nostdlib -D__ASSEMBLY__
+ ASFLAGS		+=	-fno-omit-frame-pointer -fno-optimize-sibling-calls
+ ASFLAGS		+=	-mno-save-restore -mstrict-align
+-ASFLAGS		+=	-mabi=$(PLATFORM_RISCV_ABI) -march=$(PLATFORM_RISCV_ISA)
+ ASFLAGS		+=	-mcmodel=$(PLATFORM_RISCV_CODE_MODEL)
+ ASFLAGS		+=	$(GENFLAGS)
+ ASFLAGS		+=	$(platform-asflags-y)
+diff --git a/firmware/fw_base.S b/firmware/fw_base.S
+index b66ac41..0315953 100644
+--- a/firmware/fw_base.S
++++ b/firmware/fw_base.S
+@@ -119,6 +119,8 @@ _relocate_copy_to_upper_loop:
+ 	blt	t0, t1, _relocate_copy_to_upper_loop
+ 	jr	t4
+ _wait_relocate_copy_done:
++	la	t0, _boot_status
++	REG_S   a0, 0(t0)
+ 	la	t0, _start
+ 	la	t1, _link_start
+ 	REG_L	t1, 0(t1)
+@@ -437,6 +439,8 @@ _link_start:
+ 	RISCV_PTR	_fw_start
+ _link_end:
+ 	RISCV_PTR	_fw_reloc_end
++_is_boot_hart:
++	RISCV_PTR	0
+ 
+ 	.section .entry, "ax", %progbits
+ 	.align 3
+diff --git a/lib/sbi/sbi_hsm.c b/lib/sbi/sbi_hsm.c
+index 013647a..aebc3ef 100644
+--- a/lib/sbi/sbi_hsm.c
++++ b/lib/sbi/sbi_hsm.c
+@@ -116,6 +116,7 @@ void sbi_hsm_prepare_next_jump(struct sbi_scratch *scratch, u32 hartid)
+ 		sbi_hart_hang();
+ }
+ 
++static atomic_t rtt_lottery = ATOMIC_INITIALIZER(0);
+ static void sbi_hsm_hart_wait(struct sbi_scratch *scratch, u32 hartid)
+ {
+ 	unsigned long saved_mie;
+@@ -138,6 +139,9 @@ static void sbi_hsm_hart_wait(struct sbi_scratch *scratch, u32 hartid)
+ 
+ 	/* Clear current HART IPI */
+ 	sbi_platform_ipi_clear(plat, hartid);
++
++	if (atomic_xchg(&rtt_lottery, 1) == 0)
++		scratch->next_addr = 0x90200000;
+ }
+ 
+ int sbi_hsm_init(struct sbi_scratch *scratch, u32 hartid, bool cold_boot)
+-- 
+2.25.1
+
