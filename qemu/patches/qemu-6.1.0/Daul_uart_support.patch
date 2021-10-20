@@ -1,0 +1,128 @@
+diff -uprN qemu-6.1.0-orig/hw/riscv/virt.c qemu-6.1.0/hw/riscv/virt.c
+--- qemu-6.1.0-orig/hw/riscv/virt.c	2021-08-25 01:35:40.000000000 +0800
++++ qemu-6.1.0/hw/riscv/virt.c	2021-10-20 14:04:34.515431993 +0800
+@@ -20,6 +20,7 @@
+ 
+ #include "qemu/osdep.h"
+ #include "qemu/units.h"
++#include "qemu/log.h"
+ #include "qemu/error-report.h"
+ #include "qapi/error.h"
+ #include "hw/boards.h"
+@@ -52,6 +53,7 @@ static const MemMapEntry virt_memmap[] =
+     [VIRT_PCIE_PIO] =    {  0x3000000,       0x10000 },
+     [VIRT_PLIC] =        {  0xc000000, VIRT_PLIC_SIZE(VIRT_CPUS_MAX * 2) },
+     [VIRT_UART0] =       { 0x10000000,         0x100 },
++    [VIRT_UART1] =       { 0x50000000,         0x100 },
+     [VIRT_VIRTIO] =      { 0x10001000,        0x1000 },
+     [VIRT_FW_CFG] =      { 0x10100000,          0x18 },
+     [VIRT_FLASH] =       { 0x20000000,     0x4000000 },
+@@ -194,12 +196,6 @@ static void create_fdt(RISCVVirtState *s
+     char *name, *clint_name, *plic_name, *clust_name;
+     hwaddr flashsize = virt_memmap[VIRT_FLASH].size / 2;
+     hwaddr flashbase = virt_memmap[VIRT_FLASH].base;
+-    static const char * const clint_compat[2] = {
+-        "sifive,clint0", "riscv,clint0"
+-    };
+-    static const char * const plic_compat[2] = {
+-        "sifive,plic-1.0.0", "riscv,plic0"
+-    };
+ 
+     if (mc->dtb) {
+         fdt = mc->fdt = load_device_tree(mc->dtb, &s->fdt_size);
+@@ -305,8 +301,7 @@ static void create_fdt(RISCVVirtState *s
+             (memmap[VIRT_CLINT].size * socket);
+         clint_name = g_strdup_printf("/soc/clint@%lx", clint_addr);
+         qemu_fdt_add_subnode(fdt, clint_name);
+-        qemu_fdt_setprop_string_array(fdt, clint_name, "compatible",
+-            (char **)&clint_compat, ARRAY_SIZE(clint_compat));
++        qemu_fdt_setprop_string(fdt, clint_name, "compatible", "riscv,clint0");
+         qemu_fdt_setprop_cells(fdt, clint_name, "reg",
+             0x0, clint_addr, 0x0, memmap[VIRT_CLINT].size);
+         qemu_fdt_setprop(fdt, clint_name, "interrupts-extended",
+@@ -322,8 +317,7 @@ static void create_fdt(RISCVVirtState *s
+             "#address-cells", FDT_PLIC_ADDR_CELLS);
+         qemu_fdt_setprop_cell(fdt, plic_name,
+             "#interrupt-cells", FDT_PLIC_INT_CELLS);
+-        qemu_fdt_setprop_string_array(fdt, plic_name, "compatible",
+-            (char **)&plic_compat, ARRAY_SIZE(plic_compat));
++        qemu_fdt_setprop_string(fdt, plic_name, "compatible", "riscv,plic0");
+         qemu_fdt_setprop(fdt, plic_name, "interrupt-controller", NULL, 0);
+         qemu_fdt_setprop(fdt, plic_name, "interrupts-extended",
+             plic_cells, s->soc[socket].num_harts * sizeof(uint32_t) * 4);
+@@ -402,11 +396,8 @@ static void create_fdt(RISCVVirtState *s
+         (long)memmap[VIRT_TEST].base);
+     qemu_fdt_add_subnode(fdt, name);
+     {
+-        static const char * const compat[3] = {
+-            "sifive,test1", "sifive,test0", "syscon"
+-        };
+-        qemu_fdt_setprop_string_array(fdt, name, "compatible", (char **)&compat,
+-                                      ARRAY_SIZE(compat));
++        const char compat[] = "sifive,test1\0sifive,test0\0syscon";
++        qemu_fdt_setprop(fdt, name, "compatible", compat, sizeof(compat));
+     }
+     qemu_fdt_setprop_cells(fdt, name, "reg",
+         0x0, memmap[VIRT_TEST].base,
+@@ -445,6 +436,16 @@ static void create_fdt(RISCVVirtState *s
+     qemu_fdt_setprop_string(fdt, "/chosen", "stdout-path", name);
+     g_free(name);
+ 
++    name = g_strdup_printf("/soc/uart@%lx", (long)memmap[VIRT_UART1].base);
++    qemu_fdt_add_subnode(fdt, name);
++    qemu_fdt_setprop_string(fdt, name, "compatible", "ns16550a");
++    qemu_fdt_setprop_cells(fdt, name, "reg",
++        0x0, memmap[VIRT_UART1].base,
++        0x0, memmap[VIRT_UART1].size);
++    qemu_fdt_setprop_cell(fdt, name, "clock-frequency", 3686400);
++    qemu_fdt_setprop_cell(fdt, name, "interrupt-parent", plic_mmio_phandle);
++    qemu_fdt_setprop_cell(fdt, name, "interrupts", UART1_IRQ);
++
+     name = g_strdup_printf("/soc/rtc@%lx", (long)memmap[VIRT_RTC].base);
+     qemu_fdt_add_subnode(fdt, name);
+     qemu_fdt_setprop_string(fdt, name, "compatible", "google,goldfish-rtc");
+@@ -681,10 +682,12 @@ static void virt_machine_init(MachineSta
+ 
+     if (riscv_is_32bit(&s->soc[0])) {
+         firmware_end_addr = riscv_find_and_load_firmware(machine,
+-                                    RISCV32_BIOS_BIN, start_addr, NULL);
++                                    "opensbi-riscv32-generic-fw_dynamic.bin",
++                                    start_addr, NULL);
+     } else {
+         firmware_end_addr = riscv_find_and_load_firmware(machine,
+-                                    RISCV64_BIOS_BIN, start_addr, NULL);
++                                    "opensbi-riscv64-generic-fw_dynamic.bin",
++                                    start_addr, NULL);
+     }
+ 
+     if (machine->kernel_filename) {
+@@ -760,6 +763,10 @@ static void virt_machine_init(MachineSta
+         0, qdev_get_gpio_in(DEVICE(mmio_plic), UART0_IRQ), 399193,
+         serial_hd(0), DEVICE_LITTLE_ENDIAN);
+ 
++    serial_mm_init(system_memory, memmap[VIRT_UART1].base,
++        0, qdev_get_gpio_in(DEVICE(mmio_plic), UART1_IRQ), 399193,
++        serial_hd(1), DEVICE_LITTLE_ENDIAN);
++
+     sysbus_create_simple("goldfish_rtc", memmap[VIRT_RTC].base,
+         qdev_get_gpio_in(DEVICE(mmio_plic), RTC_IRQ));
+ 
+diff -uprN qemu-6.1.0-orig/include/hw/riscv/virt.h qemu-6.1.0/include/hw/riscv/virt.h
+--- qemu-6.1.0-orig/include/hw/riscv/virt.h	2021-08-25 01:35:40.000000000 +0800
++++ qemu-6.1.0/include/hw/riscv/virt.h	2021-10-20 14:04:27.991604915 +0800
+@@ -53,6 +53,7 @@ enum {
+     VIRT_CLINT,
+     VIRT_PLIC,
+     VIRT_UART0,
++    VIRT_UART1,
+     VIRT_VIRTIO,
+     VIRT_FW_CFG,
+     VIRT_FLASH,
+@@ -64,6 +65,7 @@ enum {
+ 
+ enum {
+     UART0_IRQ = 10,
++    UART1_IRQ = 12,
+     RTC_IRQ = 11,
+     VIRTIO_IRQ = 1, /* 1 to 8 */
+     VIRTIO_COUNT = 8,
