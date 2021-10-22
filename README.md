@@ -1,2 +1,2 @@
 # rtthread-pomegranate
-Mutil-Operating Syste with RT-Thread
+Mutil-Operating System with RT-Thread
